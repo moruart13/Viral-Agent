@@ -20,16 +20,21 @@ def anime_trending(n=8):
             for m in r.json()["data"]["Page"]["media"]]
 
 def ranking_gemini(items):
-      model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-    prompt = ("Kamu analis konten sosmed. Dari daftar di bawah, pilih 7 yang paling "
-              "berpotensi viral di Indonesia. Untuk tiap pilihan beri: judul, alasan "
-              "singkat, dan 1 ide caption bahasa Indonesia yang santai.\n\n"
-              + "\n".join(f"- [{i['sumber']}] {i['judul']} (skor {i['skor']}) {i['link']}"
-                          for i in items))
+    model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+    daftar = "\n".join(
+        f"- [{i['sumber']}] {i['judul']} (skor {i['skor']}) {i['link']}" for i in items
+    )
+    prompt = (
+        "Kamu analis konten sosmed. Dari daftar di bawah, pilih 7 yang paling "
+        "berpotensi viral di Indonesia. Untuk tiap pilihan beri: judul, alasan "
+        "singkat, dan 1 ide caption bahasa Indonesia yang santai.\n\n" + daftar
+    )
     r = requests.post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         params={"key": os.environ["GEMINI_API_KEY"].strip()},
-        json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=60)
+        json={"contents": [{"parts": [{"text": prompt}]}]},
+        timeout=60,
+    )
     if not r.ok:
         print("GEMINI ERROR:", r.status_code, r.text)
         r.raise_for_status()
@@ -47,10 +52,14 @@ def kirim_telegram(teks, gambar):
 
 if __name__ == "__main__":
     items = []
-    try: items += meme_api()
-    except Exception as e: print("skip meme_api", e)
-    try: items += anime_trending()
-    except Exception as e: print("skip anilist", e)
+    try:
+        items += meme_api()
+    except Exception as e:
+        print("skip meme_api", e)
+    try:
+        items += anime_trending()
+    except Exception as e:
+        print("skip anilist", e)
 
     items.sort(key=lambda x: x["skor"] or 0, reverse=True)
     items = items[:30]
