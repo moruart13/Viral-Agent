@@ -33,7 +33,7 @@ def ranking_gemini(items):
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         params={"key": os.environ["GEMINI_API_KEY"].strip()},
         json={"contents": [{"parts": [{"text": prompt}]}]},
-        timeout=60,
+        timeout=180,
     )
     if not r.ok:
         print("GEMINI ERROR:", r.status_code, r.text)
@@ -62,6 +62,6 @@ if __name__ == "__main__":
         print("skip anilist", e)
 
     items.sort(key=lambda x: x["skor"] or 0, reverse=True)
-    items = items[:30]
+    items = items[:20]
     kirim_telegram("🔥 Konten viral hari ini\n\n" + ranking_gemini(items),
                    [i["gambar"] for i in items])
