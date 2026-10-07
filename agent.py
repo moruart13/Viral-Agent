@@ -1,4 +1,7 @@
-import os, requests
+import os, time, requests
+
+MODELS = (os.getenv("GEMINI_MODEL") or
+          "gemini-3.8-flash,gemini-3.8-flash-lite,gemini-flash-latest").split(",")
 
 def meme_api(n=8):
     out = []
@@ -20,7 +23,6 @@ def anime_trending(n=8):
             for m in r.json()["data"]["Page"]["media"]]
 
 def ranking_gemini(items):
-    model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
     daftar = "\n".join(
         f"- [{i['sumber']}] {i['judul']} (skor {i['skor']}) {i['link']}" for i in items
     )
@@ -29,16 +31,29 @@ def ranking_gemini(items):
         "berpotensi viral di Indonesia. Untuk tiap pilihan beri: judul, alasan "
         "singkat, dan 1 ide caption bahasa Indonesia yang santai.\n\n" + daftar
     )
-    r = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        params={"key": os.environ["GEMINI_API_KEY"].strip()},
-        json={"contents": [{"parts": [{"text": prompt}]}]},
-        timeout=180,
-    )
-    if not r.ok:
-        print("GEMINI ERROR:", r.status_code, r.text)
-        r.raise_for_status()
-    return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+    key = os.environ["GEMINI_API_KEY"].strip()
+    for model in MODELS:
+        model = model.strip()
+        for percobaan in range(2):
+            try:
+                r = requests.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                    params={"key": key},
+                    json={"contents": [{"parts": [{"text": prompt}]}]},
+                    timeout=60,
+                )
+            except requests.exceptions.RequestException as e:
+                print("GEMINI koneksi/timeout:", model, e)
+                time.sleep(10)
+                continue
+            if r.ok:
+                print("Gemini sukses pakai", model)
+                return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+            print("GEMINI ERROR:", model, r.status_code, r.text[:300])
+            if r.status_code in (400, 403, 404):
+                break
+            time.sleep(15)
+    return None
 
 def kirim_telegram(teks, gambar):
     tok = os.environ["TELEGRAM_TOKEN"].strip()
@@ -63,5 +78,10 @@ if __name__ == "__main__":
 
     items.sort(key=lambda x: x["skor"] or 0, reverse=True)
     items = items[:20]
-    kirim_telegram("🔥 Konten viral hari ini\n\n" + ranking_gemini(items),
-                   [i["gambar"] for i in items])
+
+    hasil = ranking_gemini(items)
+    if not hasil:
+        hasil = "(Gemini lagi sibuk, ini daftar mentah)\n\n" + "\n".join(
+            f"- [{i['sumber']}] {i['judul']} ({i['skor']}) {i['link']}" for i in items[:10]
+        )
+    kirim_telegram("🔥 Konten viral hari ini\n\n" + hasil, [i["gambar"] for i in items])
