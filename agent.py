@@ -22,6 +22,34 @@ def anime_trending(n=8):
              "gambar": m["coverImage"]["large"], "link": m["siteUrl"]}
             for m in r.json()["data"]["Page"]["media"]]
 
+def youtube_trending(n=10):
+    key = os.getenv("YOUTUBE_API_KEY", "").strip()
+    if not key:
+        print("skip youtube: YOUTUBE_API_KEY belum diisi")
+        return []
+    out, ada = [], set()
+    for kategori, label in [("", "Umum"), ("23", "Comedy"), ("1", "Film & Animation")]:
+        params = {"part": "snippet,statistics", "chart": "mostPopular",
+                  "regionCode": "ID", "maxResults": n, "key": key}
+        if kategori:
+            params["videoCategoryId"] = kategori
+        try:
+            r = requests.get("https://www.googleapis.com/youtube/v3/videos",
+                             params=params, timeout=20)
+            r.raise_for_status()
+        except Exception as e:
+            print("skip youtube", label, e)
+            continue
+        for v in r.json().get("items", []):
+            if v["id"] in ada:
+                continue
+            ada.add(v["id"])
+            out.append({"sumber": f"YouTube {label}", "judul": v["snippet"]["title"],
+                        "skor": int(v["statistics"].get("viewCount", 0)),
+                        "gambar": v["snippet"]["thumbnails"]["high"]["url"],
+                        "link": f"https://youtu.be/{v['id']}"})
+    return out
+
 def ranking_gemini(items):
     daftar = "\n".join(
         f"- [{i['sumber']}] {i['judul']} (skor {i['skor']}) {i['link']}" for i in items
@@ -67,21 +95,22 @@ def kirim_telegram(teks, gambar):
 
 if __name__ == "__main__":
     items = []
-    try:
-        items += meme_api()
-    except Exception as e:
-        print("skip meme_api", e)
-    try:
-        items += anime_trending()
-    except Exception as e:
-        print("skip anilist", e)
+    for nama, fungsi in [("meme_api", meme_api), ("anilist", anime_trending),
+                         ("youtube", youtube_trending)]:
+        try:
+            items += fungsi()
+        except Exception as e:
+            print("skip", nama, e)
 
-    items.sort(key=lambda x: x["skor"] or 0, reverse=True)
-    items = items[:20]
+    # skor tiap platform beda skala (views vs upvotes), jadi ambil per sumber biar seimbang
+    per_sumber = {}
+    for i in sorted(items, key=lambda x: x["skor"] or 0, reverse=True):
+        per_sumber.setdefault(i["sumber"], []).append(i)
+    items = [i for daftar in per_sumber.values() for i in daftar[:4]]
 
     hasil = ranking_gemini(items)
     if not hasil:
         hasil = "(Gemini lagi sibuk, ini daftar mentah)\n\n" + "\n".join(
-            f"- [{i['sumber']}] {i['judul']} ({i['skor']}) {i['link']}" for i in items[:10]
+            f"- [{i['sumber']}] {i['judul']} ({i['skor']}) {i['link']}" for i in items[:12]
         )
     kirim_telegram("🔥 Konten viral hari ini\n\n" + hasil, [i["gambar"] for i in items])
