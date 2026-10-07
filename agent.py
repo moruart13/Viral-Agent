@@ -20,7 +20,7 @@ def anime_trending(n=8):
             for m in r.json()["data"]["Page"]["media"]]
 
 def ranking_gemini(items):
-    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+      model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
     prompt = ("Kamu analis konten sosmed. Dari daftar di bawah, pilih 7 yang paling "
               "berpotensi viral di Indonesia. Untuk tiap pilihan beri: judul, alasan "
               "singkat, dan 1 ide caption bahasa Indonesia yang santai.\n\n"
