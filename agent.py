@@ -6,7 +6,7 @@ TIKTOK_TAGS = ["ardrawing", "vandraw", "arttok", "digitalart"]   # tanpa tanda #
 IG_TAGS = ["ardrawing", "vandraw", "digitalart"]
 TIKTOK_AKUN = []   # contoh: ["namaakun"] kalau VanDraw itu akun
 IG_AKUN = []       # contoh: ["namaakun"]
-HASIL_PER_TAG = 8          # makin kecil makin murah
+HASIL_PER_TAG = 5          # makin kecil makin murah
 BATAS_ITEM_APIFY = 40      # batas keras jumlah hasil per sekali jalan
 QUERY_YOUTUBE = ["ar drawing", "ar drawing shorts", "vandraw",
                  "digital art process shorts", "art timelapse shorts"]
