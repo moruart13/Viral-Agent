@@ -2,17 +2,17 @@ import os, re, time, requests
 from datetime import datetime, timedelta, timezone
 
 # ====== PENGATURAN (ubah di sini) ======
+HARI_MAKS = 7              # konten lebih tua dari ini dibuang
 TIKTOK_TAGS = ["ardrawing", "vandraw", "arttok", "digitalart"]   # tanpa tanda #
 IG_TAGS = ["ardrawing", "vandraw", "digitalart"]
-TIKTOK_AKUN = []   # contoh: ["namaakun"] kalau VanDraw itu akun
+TIKTOK_AKUN = []   # username kreator art/AR drawing, contoh: ["namaakun1", "namaakun2"]
 IG_AKUN = []       # contoh: ["namaakun"]
 HASIL_PER_TAG = 5          # makin kecil makin murah
 BATAS_ITEM_APIFY = 40      # batas keras jumlah hasil per sekali jalan
 QUERY_YOUTUBE = ["ar drawing", "ar drawing shorts", "vandraw",
                  "digital art process shorts", "art timelapse shorts"]
-SUB_ART = ["Art", "drawing", "DigitalPainting", "AnimeART"]
+SUB_ART = ["Art", "drawing", "DigitalPainting", "AnimeART"]   # kosongkan [] kalau mau dimatikan
 SHORTS_MAX = 60
-HARI_MUNDUR = 14
 # =======================================
 
 MODELS = (os.getenv("GEMINI_MODEL") or
@@ -29,6 +29,28 @@ def durasi_detik(iso):
         return 9999
     j, mn, d = (int(x or 0) for x in m.groups())
     return j * 3600 + mn * 60 + d
+
+def hitung_umur(iso=None, unix=None):
+    """Umur konten dalam hari, atau None kalau tanggalnya nggak ada."""
+    try:
+        if iso:
+            dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        elif unix:
+            dt = datetime.fromtimestamp(int(unix), tz=timezone.utc)
+        else:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt).total_seconds() / 86400
+    except Exception:
+        return None
+
+def teks_usia(umur):
+    if umur is None:
+        return "tidak diketahui"
+    if umur < 1:
+        return f"{max(umur * 24, 1):.0f} jam"
+    return f"{umur:.0f} hari"
 
 def apify_run(actor, payload):
     token = os.getenv("APIFY_TOKEN", "").strip()
@@ -51,6 +73,7 @@ def tiktok_apify():
         payload["hashtags"] = TIKTOK_TAGS
     if TIKTOK_AKUN:
         payload["profiles"] = TIKTOK_AKUN
+        payload["oldestPostDateUnified"] = f"{HARI_MAKS} days"   # filter tanggal (jalan untuk akun)
     data = apify_run("clockworks~tiktok-scraper", payload)
     out = []
     for it in data or []:
@@ -58,6 +81,7 @@ def tiktok_apify():
             continue
         out.append({"sumber": "TikTok Video", "judul": potong(it.get("text")),
                     "skor": int(it.get("playCount") or 0),
+                    "umur": hitung_umur(it.get("createTimeISO"), it.get("createTime")),
                     "gambar": (it.get("videoMeta") or {}).get("coverUrl"),
                     "link": it["webVideoUrl"]})
     return out
@@ -66,14 +90,16 @@ def instagram_apify():
     urls = [f"https://www.instagram.com/explore/tags/{t}/" for t in IG_TAGS]
     urls += [f"https://www.instagram.com/{a}/" for a in IG_AKUN]
     data = apify_run("apify~instagram-scraper", {
-        "directUrls": urls, "resultsType": "posts", "resultsLimit": HASIL_PER_TAG})
+        "directUrls": urls, "resultsType": "posts", "resultsLimit": HASIL_PER_TAG,
+        "onlyPostsNewerThan": f"{HARI_MAKS} days"})
     out = []
     for it in data or []:
         if not it.get("url"):
             continue
         skor = int(it.get("videoPlayCount") or it.get("likesCount") or 0)
         out.append({"sumber": "Instagram Reels", "judul": potong(it.get("caption")),
-                    "skor": skor, "gambar": it.get("displayUrl"), "link": it["url"]})
+                    "skor": skor, "umur": hitung_umur(it.get("timestamp")),
+                    "gambar": it.get("displayUrl"), "link": it["url"]})
     return out
 
 def youtube_shorts(per_query=15):
@@ -81,7 +107,7 @@ def youtube_shorts(per_query=15):
     if not key:
         print("skip youtube: YOUTUBE_API_KEY belum diisi")
         return []
-    sejak = (datetime.now(timezone.utc) - timedelta(days=HARI_MUNDUR)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    sejak = (datetime.now(timezone.utc) - timedelta(days=HARI_MAKS)).strftime("%Y-%m-%dT%H:%M:%SZ")
     ids = []
     for q in QUERY_YOUTUBE:
         try:
@@ -109,11 +135,13 @@ def youtube_shorts(per_query=15):
                 continue
             out.append({"sumber": "YouTube Shorts", "judul": potong(v["snippet"]["title"]),
                         "skor": int(v["statistics"].get("viewCount", 0)),
+                        "umur": hitung_umur(v["snippet"].get("publishedAt")),
                         "gambar": v["snippet"]["thumbnails"]["high"]["url"],
                         "link": f"https://youtube.com/shorts/{v['id']}"})
     return out
 
 def reddit_art(n=10):
+    # catatan: meme-api.com tidak memberi tanggal posting, jadi umur postingan tidak bisa dicek
     out = []
     for sub in SUB_ART:
         try:
@@ -126,20 +154,22 @@ def reddit_art(n=10):
             if m.get("nsfw") or m.get("spoiler"):
                 continue
             out.append({"sumber": f"r/{sub}", "judul": potong(m["title"]), "skor": m["ups"],
-                        "gambar": m["url"], "link": m["postLink"]})
+                        "umur": None, "gambar": m["url"], "link": m["postLink"]})
     return out
 
 def ranking_gemini(items):
     daftar = "\n".join(
-        f"- [{i['sumber']}] {i['judul']} (skor {i['skor']}) {i['link']}" for i in items
+        f"- [{i['sumber']}] {i['judul']} (skor {i['skor']}, usia {teks_usia(i.get('umur'))}) {i['link']}"
+        for i in items
     )
     prompt = (
         "Kamu analis konten sosmed khusus seni dan gambar. Dari daftar di bawah, pilih "
-        "10 yang paling berpotensi viral di kalangan pecinta seni di Indonesia. Minimal "
-        "5 di antaranya harus video (AR drawing, VanDraw, atau proses menggambar; sumber "
-        "bertuliskan Shorts, Video, atau Reels). Untuk tiap pilihan beri: judul, alasan "
-        "singkat, dan 1 ide konten orisinal bahasa Indonesia yang terinspirasi darinya "
-        "(bukan repost mentah).\n\n" + daftar
+        "10 yang paling berpotensi viral di kalangan pecinta seni di Indonesia. UTAMAKAN "
+        "konten yang paling baru dan sedang naik daun; hindari yang sudah lama kecuali "
+        "benar-benar masih relevan. Minimal 5 harus video (AR drawing, VanDraw, atau proses "
+        "menggambar; sumber bertuliskan Shorts, Video, atau Reels). Untuk tiap pilihan beri: "
+        "judul, usia konten, alasan singkat, dan 1 ide konten orisinal bahasa Indonesia "
+        "yang terinspirasi darinya (bukan repost mentah).\n\n" + daftar
     )
     key = os.environ["GEMINI_API_KEY"].strip()
     for model in MODELS:
@@ -185,9 +215,23 @@ if __name__ == "__main__":
         except Exception as e:
             print("skip", nama, e)
 
-    per_sumber = {}
-    ada = set()
-    for i in sorted(items, key=lambda x: x["skor"] or 0, reverse=True):
+    # buang konten yang sudah lama
+    baru, dibuang = [], 0
+    for i in items:
+        if i.get("umur") is not None and i["umur"] > HARI_MAKS:
+            dibuang += 1
+            continue
+        baru.append(i)
+    print("Dibuang karena terlalu lama:", dibuang,
+          "| tanpa tanggal:", sum(1 for i in baru if i.get("umur") is None))
+
+    # peringkat "viral baru" = views per hari
+    for i in baru:
+        hari = max(i["umur"] if i.get("umur") is not None else HARI_MAKS, 0.5)
+        i["kecepatan"] = (i["skor"] or 0) / hari
+
+    per_sumber, ada = {}, set()
+    for i in sorted(baru, key=lambda x: x["kecepatan"], reverse=True):
         if i["link"] in ada:
             continue
         ada.add(i["link"])
@@ -201,6 +245,7 @@ if __name__ == "__main__":
     hasil = ranking_gemini(items)
     if not hasil:
         hasil = "(Gemini lagi sibuk, ini daftar mentah)\n\n" + "\n".join(
-            f"- [{i['sumber']}] {i['judul']} ({i['skor']}) {i['link']}" for i in items[:20]
+            f"- [{i['sumber']}] {i['judul']} ({i['skor']}, usia {teks_usia(i.get('umur'))}) {i['link']}"
+            for i in items[:20]
         )
-    kirim_telegram("🎨 Konten art viral hari ini\n\n" + hasil, foto)
+    kirim_telegram("🎨 Konten art viral terbaru\n\n" + hasil, foto)
