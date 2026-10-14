@@ -21,3 +21,4 @@ jobs:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           IMGUR_CLIENT_ID: ${{ secrets.IMGUR_CLIENT_ID }}
           GIPHY_API_KEY: ${{ secrets.GIPHY_API_KEY }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
